@@ -1,7 +1,5 @@
 """Hot XLSX text kernels exposed through one C ABI compilation unit."""
 
-from std.algorithm import parallelize
-from std.gpu.host import DeviceContext
 from std.sys.info import simd_width_of as simdwidthof
 
 comptime BPtr = UnsafePointer[UInt8, AnyOrigin[mut=True]]
@@ -270,31 +268,10 @@ def mox_coordinates(
         if column_width(column) + 7 > stride:
             return -2
 
-    if n < 32768:
-        for i in range(n):
-            var start = i * stride
-            var p = put_coord(dst, start, Int(rows[i]), Int(columns[i]))
-            dst[p] = 0
-    else:
-        comptime CHUNK = 4096
-        var chunks = (n + CHUNK - 1) // CHUNK
-
-        def write_chunk(chunk: Int) {var rows, var columns, var dst, var stride, var n}:
-            var first = chunk * CHUNK
-            var stop = min(first + CHUNK, n)
-            for i in range(first, stop):
-                var start = i * stride
-                var p = put_coord(dst, start, Int(rows[i]), Int(columns[i]))
-                dst[p] = 0
-
-        try:
-            var ctx = DeviceContext(api="cpu")
-            parallelize(write_chunk, chunks, ctx=ctx)
-        except:
-            for i in range(n):
-                var start = i * stride
-                var p = put_coord(dst, start, Int(rows[i]), Int(columns[i]))
-                dst[p] = 0
+    for i in range(n):
+        var start = i * stride
+        var p = put_coord(dst, start, Int(rows[i]), Int(columns[i]))
+        dst[p] = 0
     return 0
 
 
