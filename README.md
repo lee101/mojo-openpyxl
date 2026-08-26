@@ -71,11 +71,11 @@ Python strings, and the XML reference is CPython's C-level `html.escape`.
 
 | case | mojo-openpyxl | openpyxl/reference | result |
 | --- | ---: | ---: | ---: |
-| 200k cell coordinates | 104.3 ms | 106.7 ms | 1.02x faster |
-| XML escape 12.5 MB | 144.3 ms | 119.4 ms | 0.83x slower |
-| save dense 20k x 10 | 790.4 ms | 2162.6 ms | 2.74x faster |
-| save text/formulas 30k x 4 | 363.9 ms | 1837.0 ms | 5.05x faster |
-| load dense 20k x 10 | 1521.4 ms | 2192.4 ms | 1.44x faster |
+| 200k cell coordinates | 44.2 ms | 66.7 ms | 1.51x faster |
+| XML escape 12.5 MB | 78.8 ms | 117.3 ms | 1.49x faster |
+| save dense 20k x 10 | 944.7 ms | 2067.8 ms | 2.19x faster |
+| save text/formulas 30k x 4 | 295.5 ms | 1844.7 ms | 6.24x faster |
+| load dense 20k x 10 | 1339.4 ms | 1829.3 ms | 1.37x faster |
 
 Worksheet writing remains the largest win: one Mojo call emits all row and cell
 tags, coordinates, escaped strings, numbers, booleans, formulas, and dates.

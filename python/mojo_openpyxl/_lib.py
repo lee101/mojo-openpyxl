@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import os
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
@@ -14,10 +15,15 @@ I = ctypes.c_int64
 _SIGNATURES = {
     "mox_escape_size": ([I, I], I),
     "mox_escape": ([I, I, I, I], I),
+    "mox_escape_sized": ([I, I, I, I, I], I),
     "mox_coordinates": ([I, I, I, I, I, I], I),
+    "mox_coordinates_packed": ([I, I, I, I, I], I),
     "mox_write_sheet": ([I, I, I, I, I, I, I, I, I], I),
 }
 _handle = None
+_COORDINATE_PARALLEL_THRESHOLD = 32_768
+_COORDINATE_WORKERS = min(os.cpu_count() or 1, 8)
+_coordinate_pool = None
 _bytes_address = ctypes.pythonapi.PyBytes_AsString
 _bytes_address.argtypes = [ctypes.py_object]
 _bytes_address.restype = ctypes.c_void_p
@@ -61,6 +67,13 @@ def addr(value) -> int:
     return ctypes.addressof(ctypes.c_char.from_buffer(value))
 
 
+def _coordinate_executor():
+    global _coordinate_pool
+    if _coordinate_pool is None:
+        _coordinate_pool = ThreadPoolExecutor(max_workers=_COORDINATE_WORKERS)
+    return _coordinate_pool
+
+
 def escape(value: str) -> str:
     raw = value.encode("utf-8")
     if not raw:
@@ -69,7 +82,9 @@ def escape(value: str) -> str:
     if size < 0:
         raise RuntimeError("native XML escape rejected its input")
     result = bytearray(size)
-    used = lib().mox_escape(addr(raw), len(raw), addr(result), len(result))
+    used = lib().mox_escape_sized(
+        addr(raw), len(raw), addr(result), len(result), size
+    )
     if used != size:
         raise RuntimeError("internal XML escape size mismatch")
     return result.decode("utf-8")
@@ -88,18 +103,42 @@ def coordinates(rows, columns) -> list[str]:
         raise ValueError("rows and columns must be one-dimensional")
     if not r.size:
         return []
-    if np.any((r < 1) | (r > 1_048_576)):
-        raise ValueError("row values must be between 1 and 1048576")
-    if np.any((c < 1) | (c > 18_278)):
-        raise ValueError("column values must be between 1 and 18278")
-    result = np.zeros((r.size, 16), dtype=np.uint8)
-    status = lib().mox_coordinates(
-        addr(r), addr(c), r.size, addr(result), result.nbytes, result.strides[0]
-    )
-    if status:
-        raise RuntimeError(f"native coordinate conversion failed ({status})")
-    records = result.view("S16").reshape(-1).tolist()
-    return b"\n".join(records).decode("ascii").splitlines()
+    stride = 11
+    result = bytearray(r.size * stride)
+    native = lib().mox_coordinates_packed
+    if r.size < _COORDINATE_PARALLEL_THRESHOLD or _COORDINATE_WORKERS == 1:
+        chunks = [(0, native(addr(r), addr(c), r.size, addr(result), len(result)))]
+    else:
+        workers = min(_COORDINATE_WORKERS, r.size)
+
+        def convert(worker):
+            start = worker * r.size // workers
+            stop = (worker + 1) * r.size // workers
+            count = stop - start
+            return native(
+                addr(r) + start * r.itemsize,
+                addr(c) + start * c.itemsize,
+                count,
+                addr(result) + start * stride,
+                count * stride,
+            )
+
+        used = list(_coordinate_executor().map(convert, range(workers)))
+        chunks = [
+            (worker * r.size // workers * stride, used[worker])
+            for worker in range(workers)
+        ]
+    if any(used == -3 for _, used in chunks):
+        raise ValueError("row or column values are outside Excel's supported range")
+    if any(used < 0 for _, used in chunks):
+        raise RuntimeError(f"native coordinate conversion failed ({chunks})")
+    if len(chunks) == 1:
+        del result[chunks[0][1] :]
+        packed = result
+    else:
+        view = memoryview(result)
+        packed = b"".join(view[start : start + used] for start, used in chunks)
+    return packed.decode("ascii").splitlines()
 
 
 def write_sheet(cells) -> bytes:

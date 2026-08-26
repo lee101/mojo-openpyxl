@@ -197,6 +197,46 @@ def put_coord(dst: BPtr, pos: Int, row: Int, column: Int) -> Int:
     return put_uint(dst, put_column(dst, pos, column), row)
 
 
+def put_coordinates_range(
+    rows: IPtr,
+    columns: IPtr,
+    dst: BPtr,
+    stride: Int,
+    start: Int,
+    stop: Int,
+):
+    for i in range(start, stop):
+        var position = i * stride
+        var p = put_coord(
+            dst, position, Int(rows[i]), Int(columns[i])
+        )
+        dst[p] = 0
+
+
+def coordinates_valid(rows: IPtr, columns: IPtr, n: Int) -> Bool:
+    comptime W = simdwidthof[DType.float64]()
+    var i = 0
+    var vector_stop = n // W * W
+    while i < vector_stop:
+        var row_values = rows.load[width=W, alignment=1](i)
+        var column_values = columns.load[width=W, alignment=1](i)
+        if (
+            row_values.lt(SIMD[DType.int64, W](1))
+            | row_values.gt(SIMD[DType.int64, W](1048576))
+            | column_values.lt(SIMD[DType.int64, W](1))
+            | column_values.gt(SIMD[DType.int64, W](18278))
+        ).reduce_or():
+            return False
+        i += W
+    while i < n:
+        var row = Int(rows[i])
+        var column = Int(columns[i])
+        if row < 1 or row > 1048576 or column < 1 or column > 18278:
+            return False
+        i += 1
+    return True
+
+
 def put_text(dst: BPtr, pos: Int, text: String) -> Int:
     var p = pos
     var src = text.unsafe_ptr()
@@ -240,6 +280,29 @@ def mox_escape(src_addr: Int, n: Int, dst_addr: Int, dst_capacity: Int) abi("C")
     return put_escape(src, 0, n, dst, 0)
 
 
+@export("mox_escape_sized")
+def mox_escape_sized(
+    src_addr: Int,
+    n: Int,
+    dst_addr: Int,
+    dst_capacity: Int,
+    required: Int,
+) abi("C") -> Int:
+    if (
+        n < 0
+        or required < 0
+        or required > dst_capacity
+        or (n > 0 and (src_addr == 0 or dst_addr == 0))
+    ):
+        return -1
+    if n == 0:
+        return 0
+    var src = BPtr(unsafe_from_address=src_addr)
+    var dst = BPtr(unsafe_from_address=dst_addr)
+    var used = put_escape(src, 0, n, dst, 0)
+    return used if used == required else -3
+
+
 @export("mox_coordinates")
 def mox_coordinates(
     rows_addr: Int,
@@ -260,19 +323,41 @@ def mox_coordinates(
     var rows = IPtr(unsafe_from_address=rows_addr)
     var columns = IPtr(unsafe_from_address=columns_addr)
     var dst = BPtr(unsafe_from_address=dst_addr)
-    for i in range(n):
-        var row = Int(rows[i])
-        var column = Int(columns[i])
-        if row < 1 or row > 1048576 or column < 1 or column > 18278:
-            return -3
-        if column_width(column) + 7 > stride:
-            return -2
-
-    for i in range(n):
-        var start = i * stride
-        var p = put_coord(dst, start, Int(rows[i]), Int(columns[i]))
-        dst[p] = 0
+    if not coordinates_valid(rows, columns, n):
+        return -3
+    if stride < 11:
+        return -2
+    put_coordinates_range(rows, columns, dst, stride, 0, n)
     return 0
+
+
+@export("mox_coordinates_packed")
+def mox_coordinates_packed(
+    rows_addr: Int,
+    columns_addr: Int,
+    n: Int,
+    dst_addr: Int,
+    dst_capacity: Int,
+) abi("C") -> Int:
+    if n < 0 or dst_capacity < 0:
+        return -1
+    if n == 0:
+        return 0
+    if rows_addr == 0 or columns_addr == 0 or dst_addr == 0:
+        return -1
+    if n > dst_capacity // 11:
+        return -2
+    var rows = IPtr(unsafe_from_address=rows_addr)
+    var columns = IPtr(unsafe_from_address=columns_addr)
+    var dst = BPtr(unsafe_from_address=dst_addr)
+    if not coordinates_valid(rows, columns, n):
+        return -3
+    var p = 0
+    for i in range(n):
+        p = put_coord(dst, p, Int(rows[i]), Int(columns[i]))
+        dst[p] = 10
+        p += 1
+    return p
 
 
 @export("mox_write_sheet")

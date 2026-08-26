@@ -69,6 +69,17 @@ def test_mojo_batch_coordinates_match_upstream():
     assert coordinates(rows, columns) == expected
 
 
+@pytest.mark.parametrize("length", range(1, 18))
+def test_mojo_batch_coordinates_simd_validation_tail(length):
+    rows = list(range(1, length + 1))
+    columns = list(itertools.islice(itertools.cycle([1, 26, 27]), length))
+    expected = [
+        f"{upstream.get_column_letter(column)}{row}"
+        for row, column in zip(rows, columns)
+    ]
+    assert coordinates(rows, columns) == expected
+
+
 @pytest.mark.parametrize(
     ("rows", "columns"),
     [
@@ -99,6 +110,17 @@ def test_native_escape_rejects_short_destination():
     source = b"&"
     destination = bytearray(4)
     assert lib().mox_escape(addr(source), len(source), addr(destination), len(destination)) == -2
+
+
+def test_native_sized_escape_rejects_inconsistent_size():
+    source = b"&"
+    destination = bytearray(6)
+    assert (
+        lib().mox_escape_sized(
+            addr(source), len(source), addr(destination), len(destination), 6
+        )
+        == -3
+    )
 
 
 @pytest.mark.parametrize("length", range(1, 18))
