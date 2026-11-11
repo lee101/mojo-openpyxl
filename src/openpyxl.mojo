@@ -12,7 +12,7 @@ def escaped_size(src: BPtr, start: Int, stop: Int) -> Int:
     var i = start
     var vector_stop = start + (stop - start) // W * W
     while i < vector_stop:
-        var chars = src.load[width=W](i)
+        var chars = src.unsafe_load[width=W](i)
         var extra = chars.eq(SIMD[DType.uint8, W](38)).select(
             SIMD[DType.uint8, W](4), SIMD[DType.uint8, W](0)
         )
@@ -52,7 +52,7 @@ def put_escape(src: BPtr, start: Int, stop: Int, dst: BPtr, pos: Int) -> Int:
     var i = start
     var vector_stop = start + (stop - start) // W * W
     while i < vector_stop:
-        var chars = src.load[width=W](i)
+        var chars = src.unsafe_load[width=W](i)
         var special = (
             chars.eq(SIMD[DType.uint8, W](38))
             | chars.eq(SIMD[DType.uint8, W](60))
@@ -218,8 +218,8 @@ def coordinates_valid(rows: IPtr, columns: IPtr, n: Int) -> Bool:
     var i = 0
     var vector_stop = n // W * W
     while i < vector_stop:
-        var row_values = rows.load[width=W, alignment=1](i)
-        var column_values = columns.load[width=W, alignment=1](i)
+        var row_values = rows.unsafe_load[width=W, alignment=1](i)
+        var column_values = columns.unsafe_load[width=W, alignment=1](i)
         if (
             row_values.lt(SIMD[DType.int64, W](1))
             | row_values.gt(SIMD[DType.int64, W](1048576))
